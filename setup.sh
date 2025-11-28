@@ -613,7 +613,7 @@ set -euo pipefail
 # =============================================================================
 
 VERBOSE=false
-POSTGRES_PASSWORD="changeme"
+POSTGRES_PASSWORD="monkey"
 POSTGRES_CONTAINER="postgres"
 GRADLE_HOME="$HOME/gradle"
 
@@ -1133,7 +1133,7 @@ task_setup_postgresql() {
         log_info "Creating PostgreSQL container..."
         docker run -d \
             --name postgres \
-            -e POSTGRES_PASSWORD=changeme \
+            -e POSTGRES_PASSWORD=monkey \
             -p 5432:5432 \
             postgres:latest
     fi
