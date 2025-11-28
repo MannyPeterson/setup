@@ -45,7 +45,7 @@ TARGET_USER="${SUDO_USER:-}"
 TARGET_HOME=""
 HOSTNAME_PARAM=""
 TASKS_COMPLETED=0
-TASKS_TOTAL=20
+TASKS_TOTAL=21
 WARNINGS=()
 
 # =============================================================================
@@ -421,6 +421,30 @@ task_install_packages() {
 }
 
 # =============================================================================
+# TASK: ENABLE RASPBERRY PI CONNECT LITE
+# =============================================================================
+
+task_enable_rpi_connect() {
+    log_task "Enabling Raspberry Pi Connect LITE"
+
+    # Enable rpi-connect if not already enabled
+    if ! systemctl is-enabled --quiet rpi-connect-user@"$TARGET_USER".service 2>/dev/null; then
+        rpi-connect on
+        log_success "rpi-connect enabled"
+    else
+        log_skip "rpi-connect already enabled"
+    fi
+
+    # Enable linger for user if not already enabled
+    if [[ "$(loginctl show-user "$TARGET_USER" --property=Linger 2>/dev/null)" != "Linger=yes" ]]; then
+        loginctl enable-linger "$TARGET_USER"
+        log_success "Linger enabled for $TARGET_USER"
+    else
+        log_skip "Linger already enabled for $TARGET_USER"
+    fi
+}
+
+# =============================================================================
 # TASK: CONFIGURE SSH
 # =============================================================================
 
@@ -737,20 +761,22 @@ _postgres_info() {
     echo "  postgresql://postgres:${POSTGRES_PASSWORD}@localhost:5432/postgres"
 }
 
-# Custom function for PostgreSQL psql
-_postgres_psql() {
+# Custom function for PostgreSQL query
+_postgres_query() {
     if ! docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$" 2>/dev/null; then
         log_error "PostgreSQL container is not running"
         echo "Run 'sm postgres start' first"
         exit 1
     fi
 
-    if [[ $# -gt 0 ]]; then
-        docker exec "$POSTGRES_CONTAINER" psql -U postgres "$@"
-    else
-        echo "Connecting to PostgreSQL..."
-        docker exec -it "$POSTGRES_CONTAINER" psql -U postgres
+    if [[ $# -eq 0 ]]; then
+        log_error "No query provided"
+        echo "Usage: sm postgres query <SQL query>"
+        exit 1
     fi
+
+    local query="$*"
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "$query"
 }
 
 # --- Register PostgreSQL Service ---
@@ -759,7 +785,7 @@ register_service "postgres" "PostgreSQL" \
     stop_cmd="docker stop '$POSTGRES_CONTAINER'" \
     status_cmd="docker ps -q -f name='^${POSTGRES_CONTAINER}\$' | grep ." \
     info_func="_postgres_info" \
-    custom_func="_postgres_psql"
+    custom_func="_postgres_query"
 
 # --- Register Gradle Service ---
 register_service "gradle" "Gradle Daemon" \
@@ -818,7 +844,7 @@ ACTIONS:
     stop        Stop the specified service
     status      Check the status of the specified service
     info        Show connection details (service-specific)
-    psql        Connect to database via psql client (postgres only)
+    query       Run a SQL query (postgres only)
 
 COMMANDS:
     list        List all available services
@@ -829,7 +855,7 @@ EXAMPLES:
     sm postgres status
     sm --verbose postgres start   # Show full docker output
     sm postgres info              # Show connection details
-    sm postgres psql              # Start interactive psql session
+    sm postgres query "SELECT version();"
     sm gradle stop
     sm list
 
@@ -912,8 +938,8 @@ run_action() {
             fi
             ;;
 
-        psql)
-            # Special case for postgres psql command
+        query)
+            # Special case for postgres query command
             if [[ "$service" == "postgres" && -n "${SERVICE_CUSTOM_FUNCS[$service]:-}" ]]; then
                 ${SERVICE_CUSTOM_FUNCS[$service]} "$@"
             else
@@ -924,7 +950,7 @@ run_action() {
 
         *)
             log_error "Invalid action '$action'"
-            echo "Valid actions: start, stop, status, info, psql"
+            echo "Valid actions: start, stop, status, info, query"
             exit 1
             ;;
     esac
@@ -974,12 +1000,12 @@ main() {
 
             # Validate action
             case "$action" in
-                start|stop|status|info|psql)
+                start|stop|status|info|query)
                     run_action "$service" "$action" "$@"
                     ;;
                 *)
                     log_error "Invalid action '$action'"
-                    echo "Valid actions: start, stop, status, info, psql"
+                    echo "Valid actions: start, stop, status, info, query"
                     exit 1
                     ;;
             esac
@@ -1256,6 +1282,7 @@ main() {
     task_set_wifi_country
     task_disable_interfaces
     task_install_packages
+    task_enable_rpi_connect
     task_configure_ssh
     task_configure_sudo
     task_configure_bashrc
