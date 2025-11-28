@@ -818,6 +818,112 @@ register_service "gradle" "Gradle Daemon" \
 #
 
 # =============================================================================
+# SYSTEM CHECK FUNCTION
+# =============================================================================
+
+system_check() {
+    # Ensure sudo credentials are cached
+    log_action "Verifying sudo access"
+    if ! sudo -v; then
+        log_error "sudo access required"
+        exit 1
+    fi
+    log_success "sudo access confirmed"
+
+    echo ""
+
+    # APT maintenance sequence
+    log_action "Updating package lists"
+    if sudo apt update; then
+        log_success "Package lists updated"
+    else
+        log_error "Failed to update package lists"
+        exit 1
+    fi
+
+    echo ""
+
+    log_action "Upgrading packages"
+    if sudo apt full-upgrade -y; then
+        log_success "Packages upgraded"
+    else
+        log_error "Failed to upgrade packages"
+        exit 1
+    fi
+
+    echo ""
+
+    log_action "Cleaning package cache"
+    if sudo apt clean; then
+        log_success "Package cache cleaned"
+    else
+        log_error "Failed to clean package cache"
+        exit 1
+    fi
+
+    echo ""
+
+    log_action "Removing unused packages"
+    if sudo apt autoremove -y; then
+        log_success "Unused packages removed"
+    else
+        log_error "Failed to remove unused packages"
+        exit 1
+    fi
+
+    echo ""
+
+    # rpi-connect status check
+    log_action "Checking rpi-connect status"
+    local rpi_status
+    if ! rpi_status=$(rpi-connect status 2>&1); then
+        log_error "Failed to get rpi-connect status"
+        echo "$rpi_status" | indent_output
+        exit 1
+    fi
+
+    local rpi_ok=true
+
+    if ! echo "$rpi_status" | grep -q "Signed in: yes"; then
+        log_error "rpi-connect: not signed in"
+        rpi_ok=false
+    fi
+
+    if ! echo "$rpi_status" | grep -q "Subscribed to events: yes"; then
+        log_error "rpi-connect: not subscribed to events"
+        rpi_ok=false
+    fi
+
+    if ! echo "$rpi_status" | grep -q "Remote shell: allowed"; then
+        log_error "rpi-connect: remote shell not allowed"
+        rpi_ok=false
+    fi
+
+    if [[ "$rpi_ok" == "true" ]]; then
+        log_success "rpi-connect status OK"
+    else
+        echo "Current status:"
+        echo "$rpi_status" | indent_output
+        exit 1
+    fi
+
+    echo ""
+
+    # Linger check
+    log_action "Checking linger status"
+    if loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q "Linger=yes"; then
+        log_success "Linger is enabled for $USER"
+    else
+        log_error "Linger is not enabled for $USER"
+        echo "  Enable with: sudo loginctl enable-linger $USER"
+        exit 1
+    fi
+
+    echo ""
+    log_success "All system checks passed"
+}
+
+# =============================================================================
 # CORE FUNCTIONS (Do not modify unless adding new actions)
 # =============================================================================
 
@@ -847,10 +953,12 @@ ACTIONS:
     query       Run a SQL query (postgres only)
 
 COMMANDS:
+    check       Run system maintenance (apt updates) and verify rpi-connect/linger
     list        List all available services
     help        Show this help message
 
 EXAMPLES:
+    sm check                      # Run system maintenance and checks
     sm postgres start
     sm postgres status
     sm --verbose postgres start   # Show full docker output
@@ -980,6 +1088,9 @@ main() {
     fi
 
     case "$1" in
+        check)
+            system_check
+            ;;
         list)
             list_services
             ;;
